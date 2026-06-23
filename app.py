@@ -40,11 +40,15 @@ def fetch_market_data(ticker):
     start = end - timedelta(days=5*365)
     df = yf.download(ticker, start=start, end=end, progress=False)
     
+    # FIX: Extract data into a standard Python dictionary so Streamlit can serialize it
     info = {}
     try:
-        info = yf.Ticker(ticker).fast_info
-    except:
+        fast = yf.Ticker(ticker).fast_info
+        # Convert custom yfinance objects to standard Python types (like float)
+        info['marketCap'] = float(fast.market_cap) if fast.market_cap else "N/A"
+    except Exception:
         pass
+        
     return df, info
 
 # --- Sidebar Configuration ---
