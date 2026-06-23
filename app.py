@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import warnings
 from prophet import Prophet
+import time
 
 warnings.filterwarnings('ignore')
 
@@ -29,10 +30,29 @@ st.title("🏛️ AlphaQuant: Institutional Market Analysis & AI Engine")
 st.markdown("A unified quantitative terminal combining Fundamental health, Technical momentum, and Algorithmic AI forecasting.")
 st.markdown("---")
 
+# --- DATA FETCHING WITH CACHING (THE FIX) ---
+@st.cache_data(ttl=3600, show_spinner=False) # Caches data for 1 hour to prevent Rate Limiting
+def fetch_stock_data(ticker):
+    end_date = datetime.today()
+    start_date = end_date - timedelta(days=5*365)
+    
+    # Fetch historical price data
+    df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+    
+    # Try to fetch fundamental info, but don't crash if rate-limited
+    info = {}
+    try:
+        ticker_obj = yf.Ticker(ticker)
+        info = ticker_obj.info
+    except Exception:
+        pass # If yfinance blocks the info request, silently continue
+        
+    return df, info
+
 # --- Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ Engine Configuration")
-    ticker_symbol = st.text_input("Stock Ticker (e.g., RELIANCE.NS, INFY.NS, TSLA)", value="RELIANCE.NS").upper()
+    ticker_symbol = st.text_input("Stock Ticker (e.g., RELIANCE.NS, INFY.NS)", value="RELIANCE.NS").upper()
     
     st.markdown("### 🔮 Forecast Horizon")
     horizon_years = st.slider("Years into the future:", min_value=1, max_value=5, value=2)
@@ -40,62 +60,48 @@ with st.sidebar:
     run_analysis = st.button("🚀 Execute Terminal Pipeline", type="primary", use_container_width=True)
     
     st.markdown("---")
-    st.info("💡 **Verdict Engine:** The app uses a confluence model (combining RSI, MACD, and SMAs) to generate an automated technical rating.")
+    st.info("💡 **Anti-Rate Limit Active:** Data is cached for 1 hour to prevent Yahoo Finance blocks.")
 
 # --- Main Logic ---
 if run_analysis:
     if ticker_symbol:
         with st.spinner(f"📡 Establishing uplink to market data for {ticker_symbol}..."):
             try:
-                # 1. Fetch Historical Data
-                end_date = datetime.today()
-                start_date = end_date - timedelta(days=5*365)
-                df = yf.download(ticker_symbol, start=start_date, end=end_date, progress=False)
-                
-                # Fetch Fundamental Info
-                ticker_obj = yf.Ticker(ticker_symbol)
-                info = ticker_obj.info
+                # Use the cached function!
+                df, info = fetch_stock_data(ticker_symbol)
                 
                 if df.empty:
-                    st.error("No data found. Please verify the ticker symbol.")
+                    st.error("No data found. Please verify the ticker symbol or wait a few minutes if Yahoo is blocking you.")
                     st.stop()
                 
-                # Format Data
+                # Format Data safely
                 if isinstance(df.columns, pd.MultiIndex):
                     df_close = df['Close'][ticker_symbol].dropna()
-                    df_high = df['High'][ticker_symbol].dropna()
-                    df_low = df['Low'][ticker_symbol].dropna()
                 else:
                     df_close = df['Close'].dropna()
-                    df_high = df['High'].dropna()
-                    df_low = df['Low'].dropna()
                 
                 current_price = df_close.iloc[-1]
                 
                 # --- CALCULATION ENGINE ---
                 daily_returns = df_close.pct_change().dropna()
-                volatility = daily_returns.std() * np.sqrt(252) * 100
                 cagr = (((current_price / df_close.iloc[0]) ** (1/5)) - 1) * 100
                 
-                # Technicals: SMAs
+                # Technicals
                 sma_50 = df_close.rolling(window=50).mean()
                 sma_200 = df_close.rolling(window=200).mean()
                 
-                # Technicals: RSI
                 delta = df_close.diff()
                 gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
                 loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
                 rs = gain / loss
                 rsi = 100 - (100 / (1 + rs))
 
-                # Technicals: MACD
                 ema_12 = df_close.ewm(span=12, adjust=False).mean()
                 ema_26 = df_close.ewm(span=26, adjust=False).mean()
                 macd = ema_12 - ema_26
                 signal_line = macd.ewm(span=9, adjust=False).mean()
                 macd_hist = macd - signal_line
                 
-                # Technicals: Bollinger Bands
                 sma_20 = df_close.rolling(window=20).mean()
                 std_20 = df_close.rolling(window=20).std()
                 upper_bb = sma_20 + (std_20 * 2)
@@ -105,34 +111,30 @@ if run_analysis:
                 score = 0
                 reasons = []
                 
-                # RSI Logic
                 curr_rsi = rsi.iloc[-1]
                 if curr_rsi < 35:
                     score += 1
-                    reasons.append(f"🟢 **Bullish:** RSI is at {curr_rsi:.1f} (Oversold territory, potential rebound).")
+                    reasons.append(f"🟢 **Bullish:** RSI is at {curr_rsi:.1f} (Oversold).")
                 elif curr_rsi > 70:
                     score -= 1
-                    reasons.append(f"🔴 **Bearish:** RSI is at {curr_rsi:.1f} (Overbought territory, potential pullback).")
+                    reasons.append(f"🔴 **Bearish:** RSI is at {curr_rsi:.1f} (Overbought).")
                 else:
-                    reasons.append(f"⚪ **Neutral:** RSI is at {curr_rsi:.1f} (Stable momentum).")
+                    reasons.append(f"⚪ **Neutral:** RSI is at {curr_rsi:.1f}.")
 
-                # MACD Logic
                 if macd.iloc[-1] > signal_line.iloc[-1]:
                     score += 1
-                    reasons.append("🟢 **Bullish:** MACD line is above the Signal line (Upward momentum).")
+                    reasons.append("🟢 **Bullish:** MACD line is above the Signal line.")
                 else:
                     score -= 1
-                    reasons.append("🔴 **Bearish:** MACD line is below the Signal line (Downward momentum).")
+                    reasons.append("🔴 **Bearish:** MACD line is below the Signal line.")
 
-                # Trend Logic (Price vs 200 SMA)
                 if current_price > sma_200.iloc[-1]:
                     score += 1
-                    reasons.append("🟢 **Bullish:** Current price is above the 200-Day SMA (Long-term uptrend).")
+                    reasons.append("🟢 **Bullish:** Price is above the 200-Day SMA (Long-term uptrend).")
                 else:
                     score -= 1
-                    reasons.append("🔴 **Bearish:** Current price is below the 200-Day SMA (Long-term downtrend).")
+                    reasons.append("🔴 **Bearish:** Price is below the 200-Day SMA.")
 
-                # Verdict Classification
                 if score >= 2:
                     verdict_class = "verdict-buy"
                     verdict_text = "🎯 SYSTEM VERDICT: STRONG BUY / ACCUMULATE"
@@ -145,11 +147,7 @@ if run_analysis:
 
                 # UI Layout: TABS
                 tab_fund, tab_tech, tab_forecast, tab_season, tab_export = st.tabs([
-                    "🏢 Fundamentals", 
-                    "📊 Technicals & Verdict", 
-                    "🔮 AI Forecast", 
-                    "🧠 Seasonality",
-                    "💾 Data & Export"
+                    "🏢 Fundamentals", "📊 Technicals", "🔮 Forecast", "🧠 Seasonality", "💾 Export"
                 ])
 
                 # ==========================================
@@ -159,8 +157,6 @@ if run_analysis:
                     st.header(f"Company Overview: {info.get('longName', ticker_symbol)}")
                     
                     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                    
-                    # Safely fetch fundamental data
                     mcap = info.get('marketCap', 'N/A')
                     if mcap != 'N/A': mcap = f"₹{mcap / 1e9:,.2f} Billion"
                     
@@ -176,58 +172,39 @@ if run_analysis:
                     col_f4.markdown(f'<div class="metric-card"><div class="metric-label">Dividend Yield</div><div class="metric-value">{div_yield}</div></div>', unsafe_allow_html=True)
                     
                     st.markdown("<br>", unsafe_allow_html=True)
-                    st.subheader("Business Summary")
-                    st.write(info.get('longBusinessSummary', 'No business summary available from Yahoo Finance for this ticker.'))
+                    st.write(info.get('longBusinessSummary', 'Fundamental summary is temporarily unavailable due to Yahoo Finance rate limits. Technical and forecasting tools are fully operational.'))
 
                 # ==========================================
                 # TAB 2: TECHNICALS & VERDICT
                 # ==========================================
                 with tab_tech:
-                    st.header("Algorithmic Technical Analysis")
-                    
-                    # Display the Automated Verdict
                     st.markdown(f'<div class="verdict-box {verdict_class}">{verdict_text}</div>', unsafe_allow_html=True)
-                    
-                    with st.expander("🔍 View Algorithmic Reasoning (Why did the AI choose this verdict?)", expanded=True):
-                        for reason in reasons:
-                            st.markdown(reason)
+                    with st.expander("🔍 View Algorithmic Reasoning"):
+                        for r in reasons: st.markdown(r)
 
-                    # Master Technical Chart
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.6, 0.2, 0.2], subplot_titles=("Price, Moving Averages & Bollinger Bands", "RSI (Momentum)", "MACD (Trend Direction)"))
-                    
-                    # Row 1: Price, SMAs, Bollinger Bands
+                    fig_tech = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.6, 0.2, 0.2])
                     fig_tech.add_trace(go.Scatter(x=df_close.index, y=df_close, name="Close Price", line=dict(color="#2c3e50")), row=1, col=1)
                     fig_tech.add_trace(go.Scatter(x=df_close.index, y=sma_50, name="50 SMA", line=dict(color="#e67e22", dash="dot")), row=1, col=1)
                     fig_tech.add_trace(go.Scatter(x=df_close.index, y=sma_200, name="200 SMA", line=dict(color="#c0392b", dash="dash")), row=1, col=1)
-                    
-                    # Bollinger Bands (Shaded area)
                     fig_tech.add_trace(go.Scatter(x=upper_bb.index, y=upper_bb, line=dict(color='rgba(41, 128, 185, 0.2)'), name='Upper Band', showlegend=False), row=1, col=1)
                     fig_tech.add_trace(go.Scatter(x=lower_bb.index, y=lower_bb, line=dict(color='rgba(41, 128, 185, 0.2)'), fill='tonexty', fillcolor='rgba(41, 128, 185, 0.1)', name='Bollinger Bands'), row=1, col=1)
                     
-                    # Row 2: RSI
                     fig_tech.add_trace(go.Scatter(x=rsi.index, y=rsi, name="RSI", line=dict(color="#8e44ad")), row=2, col=1)
                     fig_tech.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
                     fig_tech.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
                     
-                    # Row 3: MACD
                     fig_tech.add_trace(go.Scatter(x=macd.index, y=macd, name="MACD", line=dict(color="#2980b9")), row=3, col=1)
                     fig_tech.add_trace(go.Scatter(x=signal_line.index, y=signal_line, name="Signal", line=dict(color="#e74c3c")), row=3, col=1)
                     fig_tech.add_trace(go.Bar(x=macd_hist.index, y=macd_hist, name="Histogram", marker_color=np.where(macd_hist>0, '#27ae60', '#c0392b')), row=3, col=1)
 
-                    fig_tech.update_layout(height=850, hovermode="x unified", template="plotly_white", margin=dict(t=40, b=40))
+                    fig_tech.update_layout(height=800, hovermode="x unified", template="plotly_white", margin=dict(t=40, b=40))
                     st.plotly_chart(fig_tech, use_container_width=True)
 
-                    with st.expander("📚 Educational Definition: Bollinger Bands"):
-                        st.write("The light blue shaded area around the price. When the price touches the top line, it is statistically 'expensive' (overextended). When it touches the bottom line, it is 'cheap'. If the bands squeeze tightly together, a massive breakout/crash is likely incoming.")
-
                 # ==========================================
-                # TAB 3: AI PRICE FORECAST
+                # TAB 3: AI FORECAST
                 # ==========================================
                 with tab_forecast:
                     st.header(f"Algorithmic Price Projection ({horizon_years} Year Horizon)")
-                    
-                    # AI Processing
                     prophet_df = df_close.reset_index()
                     prophet_df.columns = ['ds', 'y']
                     prophet_df['ds'] = prophet_df['ds'].dt.tz_localize(None)
@@ -242,11 +219,10 @@ if run_analysis:
                     future = future[future['ds'].dt.weekday < 5] 
                     forecast = model.predict(future)
                     
-                    # Forecast Chart
                     fig_fore = go.Figure()
                     fig_fore.add_trace(go.Scatter(x=prophet_df['ds'], y=prophet_df['y'], name='Historical Close', line=dict(color='#2c3e50')))
-                    fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='AI Target Trend', line=dict(color='#27ae60', width=3)))
-                    fig_fore.add_trace(go.Scatter(x=pd.concat([forecast['ds'], forecast['ds'][::-1]]), y=pd.concat([forecast['yhat_upper'], forecast['yhat_lower'][::-1]]), fill='toself', fillcolor='rgba(39, 174, 96, 0.2)', line=dict(color='rgba(255,255,255,0)'), name='Confidence Boundary'))
+                    fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='AI Target', line=dict(color='#27ae60', width=3)))
+                    fig_fore.add_trace(go.Scatter(x=pd.concat([forecast['ds'], forecast['ds'][::-1]]), y=pd.concat([forecast['yhat_upper'], forecast['yhat_lower'][::-1]]), fill='toself', fillcolor='rgba(39, 174, 96, 0.2)', line=dict(color='rgba(255,255,255,0)'), name='Confidence'))
                     
                     fig_fore.update_layout(height=600, hovermode="x unified", template="plotly_white")
                     st.plotly_chart(fig_fore, use_container_width=True)
@@ -255,12 +231,11 @@ if run_analysis:
                 # TAB 4: SEASONALITY
                 # ==========================================
                 with tab_season:
-                    st.header("Algorithm Component Breakdown")
                     col_y, col_w = st.columns(2)
                     with col_y:
                         st.subheader("🗓️ Yearly Institutional Cycle")
                         fig_yearly = go.Figure(go.Scatter(x=forecast['ds'].dt.dayofyear, y=forecast['yearly'], mode='lines', line=dict(color='#8e44ad', width=3)))
-                        fig_yearly.update_layout(xaxis_title="Day of Year", yaxis_title="Impact on Stock Price (INR)", template="plotly_white", height=350)
+                        fig_yearly.update_layout(template="plotly_white", height=350)
                         st.plotly_chart(fig_yearly, use_container_width=True)
                     with col_w:
                         st.subheader("📆 Weekly Trading Cycle")
@@ -269,16 +244,13 @@ if run_analysis:
                         weekly_data['weekday'] = weekly_data['ds'].dt.weekday
                         weekly_avg = weekly_data[weekly_data['weekday'] < 5].groupby('weekday')['weekly'].mean()
                         fig_weekly = go.Figure(go.Bar(x=days, y=weekly_avg.values, marker_color='#2980b9'))
-                        fig_weekly.update_layout(yaxis_title="Impact on Stock Price (INR)", template="plotly_white", height=350)
+                        fig_weekly.update_layout(template="plotly_white", height=350)
                         st.plotly_chart(fig_weekly, use_container_width=True)
 
                 # ==========================================
-                # TAB 5: DATA EXPORT
+                # TAB 5: EXPORT
                 # ==========================================
                 with tab_export:
-                    st.header("💾 Download AI Trajectory Data")
-                    st.markdown("Export the forward-looking AI data for integration into Excel or external financial models.")
-                    
                     last_date = prophet_df['ds'].max()
                     future_only = forecast[forecast['ds'] > last_date][['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
                     future_only.columns = ['Date', 'Projected Target', 'Bearish Target', 'Bullish Target']
@@ -287,15 +259,8 @@ if run_analysis:
                     future_rounded = future_only.round(2)
                     
                     st.dataframe(future_rounded, use_container_width=True)
-                    
-                    # Convert DF to CSV for download
                     csv = future_rounded.to_csv().encode('utf-8')
-                    st.download_button(
-                        label="📥 Download Forecast as CSV",
-                        data=csv,
-                        file_name=f'{ticker_symbol}_forecast_{horizon_years}Y.csv',
-                        mime='text/csv',
-                    )
+                    st.download_button("📥 Download Forecast as CSV", data=csv, file_name=f'{ticker_symbol}_forecast.csv', mime='text/csv')
 
             except Exception as e:
-                st.error(f"Analysis failed. Ensure the ticker symbol is valid (e.g., INFY.NS). Error Details: {e}")
+                st.error(f"Analysis failed. {e}")
