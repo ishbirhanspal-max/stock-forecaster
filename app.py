@@ -361,9 +361,41 @@ elif run_analysis and ticker_symbol:
                     <b>🤖 Automated Analysis:</b> From the current price of {sym}{current_price:,.2f}, the math projects a median future value of <b>{sym}{target_price:,.2f}</b> in {horizon_years} years. The shaded blue area represents the mathematical volatility boundary.
                     </div>
                     """, unsafe_allow_html=True)
-
+# ==========================================
+            # TAB 4: STOCHASTIC MONTE CARLO
             # ==========================================
-            # TAB 4: RAW DATA EXPORT
+            with tab_mc:
+                with st.spinner("🧠 Booting Stochastic Engine..."):
+                    trading_days = int(horizon_years * 252)
+                    daily_returns = df_close.pct_change().dropna()
+                    mu = daily_returns.mean()
+                    sigma = daily_returns.std()
+                    
+                    # --- THE FIX: CALCULATE DYNAMIC SUPPORT FLOOR ---
+                    # Find the lowest price in the last 5 years
+                    historical_low = df_close.min()
+                    # Set a hard floor (e.g., 20% below the 5-year low) to prevent zero-crashes
+                    support_floor = historical_low * 0.80 
+                    
+                    sim_array = np.zeros((trading_days, auto_sims), dtype=np.float32)
+                    sim_array[0] = current_price
+                    
+                    for t in range(1, trading_days):
+                        shock = np.random.normal(0, 1, auto_sims)
+                        
+                        # Calculate the next step
+                        next_step = sim_array[t-1] * np.exp((mu - 0.5 * sigma**2) + sigma * shock)
+                        
+                        # THE FIX: Apply the Support Floor boundary
+                        # If the math tries to push the price below the floor, force it to bounce
+                        sim_array[t] = np.maximum(next_step, support_floor)
+                        
+                    future_dates_mc = pd.bdate_range(start=df_close.index[-1] + pd.Timedelta(days=1), periods=trading_days)
+                    median_path = np.median(sim_array, axis=1)
+                    upper_95 = np.percentile(sim_array, 95, axis=1)
+                    lower_05 = np.percentile(sim_array, 5, axis=1)
+            # ==========================================
+            # TAB 5: RAW DATA EXPORT
             # ==========================================
             with tab_data:
                 st.header("💾 Algorithmic Data Matrix")
