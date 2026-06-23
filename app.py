@@ -58,63 +58,53 @@ def get_currency_config(ticker):
     elif ticker_up.endswith('.DE') or ticker_up.endswith('.PA') or ticker_up.endswith('.AS'): return '€', 'EUR'
     else: return '$', 'USD'
 
-# --- DATA FETCHING (With Stealth Backend Bypass) ---
+# --- DATA FETCHING (With Anti-Wikipedia Sanitization) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_data(ticker):
     end = datetime.today()
     start = end - timedelta(days=5*365)
     
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    })
-    
-    df = yf.download(ticker, start=start, end=end, progress=False, session=session, auto_adjust=True)
+    # Bypass 403 Errors: Let yfinance handle the session naturally 
+    df = yf.download(ticker, start=start, end=end, progress=False)
     
     info = {
         'longName': ticker,
-        'longBusinessSummary': "Corporate briefing currently unavailable due to exchange rate limits. Quantitative matrices remain operational.",
+        'longBusinessSummary': "Corporate briefing currently unavailable. Quantitative matrices remain operational.",
         'marketCap': 'N/A', 'trailingPE': 'N/A', 'dividendYield': 'N/A',
         'beta': 'N/A', 'fiftyTwoWeekHigh': 'N/A', 'fiftyTwoWeekLow': 'N/A', 'averageVolume': 'N/A'
     }
     
     try:
-        t = yf.Ticker(ticker, session=session)
-        fast = t.fast_info
-        info['marketCap'] = float(fast.market_cap) if fast.market_cap else "N/A"
-        info['fiftyTwoWeekHigh'] = float(fast.year_high) if fast.year_high else "N/A"
-        info['fiftyTwoWeekLow'] = float(fast.year_low) if fast.year_low else "N/A"
-    except:
-        pass
-
-    try:
+        t = yf.Ticker(ticker)
+        
+        # Fast Info (Price/Cap Data)
+        try:
+            fast = t.fast_info
+            info['marketCap'] = float(fast.market_cap) if fast.market_cap else "N/A"
+            info['fiftyTwoWeekHigh'] = float(fast.year_high) if fast.year_high else "N/A"
+            info['fiftyTwoWeekLow'] = float(fast.year_low) if fast.year_low else "N/A"
+        except:
+            pass
+            
+        # Full Info
         full_info = t.info
         info['longName'] = full_info.get('longName', info['longName'])
-        if 'longBusinessSummary' in full_info:
-            info['longBusinessSummary'] = full_info['longBusinessSummary']
         info['trailingPE'] = full_info.get('trailingPE', info['trailingPE'])
         info['dividendYield'] = full_info.get('dividendYield', info['dividendYield'])
         info['beta'] = full_info.get('beta', info['beta'])
         info['averageVolume'] = full_info.get('averageVolume', info['averageVolume'])
+        
+        # THE WIKIPEDIA KILLER (Sanitization Filter)
+        raw_summary = full_info.get('longBusinessSummary', '')
+        wiki_flags = ["Wikipedia", "reporting mark", "portmanteau", "public API", "Conrail", "encyclopedia"]
+        
+        if any(flag.lower() in raw_summary.lower() for flag in wiki_flags) or len(raw_summary) < 50:
+            info['longBusinessSummary'] = "Primary fundamental database returned flagged/unverified public data. Corporate briefing has been purged for terminal security. Asset evaluation will proceed strictly via technical matrices."
+        else:
+            info['longBusinessSummary'] = raw_summary
+
     except Exception:
         pass
-        
-    if "unavailable" in info['longBusinessSummary'] or len(info['longBusinessSummary']) < 50:
-        try:
-            url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}?modules=assetProfile,price"
-            res = session.get(url, timeout=5).json()
-            
-            result = res.get('quoteSummary', {}).get('result', [])
-            if result and result[0]:
-                profile = result[0].get('assetProfile', {})
-                price_data = result[0].get('price', {})
-                
-                if profile.get('longBusinessSummary'):
-                    info['longBusinessSummary'] = profile['longBusinessSummary']
-                if price_data.get('longName'):
-                    info['longName'] = price_data['longName']
-        except Exception:
-            pass
 
     return df, info
 
@@ -182,12 +172,19 @@ elif run_analysis and ticker_symbol:
             
             sym, curr_code = get_currency_config(ticker_symbol)
             
-            if isinstance(df.columns, pd.MultiIndex):
-                df_close = df['Close'][ticker_symbol].dropna()
-                df_vol = df['Volume'][ticker_symbol].dropna()
-            else:
-                df_close = df['Close'].dropna()
-                df_vol = df['Volume'].dropna()
+          # --- ROBUST DATAFRAME PARSING ---
+            # Ensure df is properly parsed regardless of yfinance MultiIndex updates
+            try:
+                if isinstance(df.columns, pd.MultiIndex):
+                    # Safely extract the first column of Close/Volume regardless of ticker casing
+                    df_close = df['Close'].iloc[:, 0].dropna() if isinstance(df['Close'], pd.DataFrame) else df['Close'].dropna()
+                    df_vol = df['Volume'].iloc[:, 0].dropna() if isinstance(df['Volume'], pd.DataFrame) else df['Volume'].dropna()
+                else:
+                    df_close = df['Close'].dropna()
+                    df_vol = df['Volume'].dropna()
+            except KeyError:
+                st.error(f"Critical Failure: Data structural mismatch for '{ticker_symbol}'. The exchange may be offline or the ticker is invalid.")
+                st.stop()
 
             current_price = df_close.iloc[-1]
             
