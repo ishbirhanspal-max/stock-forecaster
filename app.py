@@ -133,7 +133,7 @@ if run_analysis:
                     # Row 3: MACD
                     fig_tech.add_trace(go.Scatter(x=macd.index, y=macd, name="MACD", line=dict(color="#2980b9")), row=3, col=1)
                     fig_tech.add_trace(go.Scatter(x=signal_line.index, y=signal_line, name="Signal", line=dict(color="#e74c3c")), row=3, col=1)
-                    fig_tech.add_bar(x=macd_histogram.index, y=macd_histogram, name="Histogram", marker_color=np.where(macd_histogram>0, '#27ae60', '#c0392b')), row=3, col=1)
+                    fig_tech.add_trace(go.Bar(x=macd_histogram.index, y=macd_histogram, name="Histogram", marker_color=np.where(macd_histogram>0, '#27ae60', '#c0392b')), row=3, col=1)
 
                     fig_tech.update_layout(height=800, hovermode="x unified", template="plotly_white", margin=dict(t=40, b=40))
                     st.plotly_chart(fig_tech, use_container_width=True)
