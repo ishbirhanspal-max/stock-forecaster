@@ -57,11 +57,11 @@ def get_currency_config(ticker):
     elif ticker_up.endswith('.DE') or ticker_up.endswith('.PA') or ticker_up.endswith('.AS'): return '€', 'EUR'
     else: return '$', 'USD'
 
-# --- DATA FETCHING ---
+# --- DATA FETCHING (With Multi-API Routing) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_data(ticker):
     end = datetime.today()
-    start = end - timedelta(days=5*365)
+    start = end - timedelta(days=5*365) # Strictly forces minimum 5 years of data
     
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/114.0.0.0 Safari/537.36'})
@@ -73,7 +73,7 @@ def fetch_data(ticker):
         t = yf.Ticker(ticker, session=session)
         full_info = t.info
         info['longName'] = full_info.get('longName', ticker)
-        info['longBusinessSummary'] = full_info.get('longBusinessSummary', 'Business profile is temporarily masked by exchange servers.')
+        info['longBusinessSummary'] = full_info.get('longBusinessSummary', '')
         info['marketCap'] = full_info.get('marketCap', 'N/A')
         info['trailingPE'] = full_info.get('trailingPE', 'N/A')
         info['dividendYield'] = full_info.get('dividendYield', 'N/A')
@@ -85,13 +85,36 @@ def fetch_data(ticker):
         try:
             fast = yf.Ticker(ticker).fast_info
             info['longName'] = ticker
-            info['longBusinessSummary'] = "Deep textual summary is currently masked by Yahoo Finance rate limits."
+            info['longBusinessSummary'] = ""
             info['marketCap'] = float(fast.market_cap) if fast.market_cap else "N/A"
             info['fiftyTwoWeekHigh'] = float(fast.year_high) if fast.year_high else "N/A"
             info['fiftyTwoWeekLow'] = float(fast.year_low) if fast.year_low else "N/A"
         except:
             pass
             
+    # --- WIKIPEDIA API FALLBACK ROUTER ---
+    # If Yahoo blocked the text, silently pull from Wikipedia
+    if not info.get('longBusinessSummary') or len(info.get('longBusinessSummary', '')) < 50:
+        try:
+            # Extract the core company name (e.g., "Reliance" from "Reliance Industries Limited")
+            search_name = info.get('longName', ticker).split(',')[0].split(' ')[0]
+            wiki_search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={search_name} company&utf8=&format=json"
+            search_res = session.get(wiki_search_url, timeout=3).json()
+            
+            if search_res['query']['search']:
+                best_match_title = search_res['query']['search'][0]['title']
+                wiki_summary_url = f"https://en.wikipedia.org/w/api.php?format=json&action=query&prop=extracts&exintro&explaintext&redirects=1&titles={best_match_title}"
+                summary_res = session.get(wiki_summary_url, timeout=3).json()
+                
+                pages = summary_res['query']['pages']
+                for page_id in pages:
+                    wiki_text = pages[page_id].get('extract', '')
+                    # Grab the first ~800 characters for a clean briefing
+                    info['longBusinessSummary'] = wiki_text[:800] + "... [Source: Wikipedia Public API Database]"
+                    break
+        except Exception:
+            info['longBusinessSummary'] = "Corporate briefing is currently unavailable. Both primary exchange servers and secondary databases rejected the data request."
+
     return df, info
 
 # --- SIDEBAR CONTROLS ---
