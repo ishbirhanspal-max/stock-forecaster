@@ -188,11 +188,13 @@ elif run_analysis and ticker_symbol:
             elif score <= -2: master_class, master_text = "v-sell", "MASTER VERDICT: STRONGLY BEARISH"
             else: master_class, master_text = "v-hold", "MASTER VERDICT: NEUTRAL"
 
+            # THE FIX: ALL TABS DECLARED CORRECTLY
             # --- UI TABS ---
-            tab_summary, tab_tech, tab_fore, tab_data = st.tabs([
+            tab_summary, tab_tech, tab_fore, tab_mc, tab_data = st.tabs([
                 "📑 Executive Summary", 
                 "📊 Technical Dashboard", 
                 "🔮 Predictive AI", 
+                "🎲 Stochastic Risk",
                 "💾 Raw Data"
             ])
 
@@ -361,20 +363,24 @@ elif run_analysis and ticker_symbol:
                     <b>🤖 Automated Analysis:</b> From the current price of {sym}{current_price:,.2f}, the math projects a median future value of <b>{sym}{target_price:,.2f}</b> in {horizon_years} years. The shaded blue area represents the mathematical volatility boundary.
                     </div>
                     """, unsafe_allow_html=True)
-# ==========================================
-            # TAB 4: STOCHASTIC MONTE CARLO
+
+            # ==========================================
+            # TAB 4: STOCHASTIC MONTE CARLO (FIXED)
             # ==========================================
             with tab_mc:
+                st.header(f"Stochastic Volatility Engine ({horizon_years} Year Horizon)")
                 with st.spinner("🧠 Booting Stochastic Engine..."):
+                    # THE FIX: AUTOMATED SIMULATION OPTIMIZER
+                    auto_sims = int(500 / horizon_years)
+                    auto_sims = min(max(auto_sims, 100), 1000)
+                    
                     trading_days = int(horizon_years * 252)
                     daily_returns = df_close.pct_change().dropna()
                     mu = daily_returns.mean()
                     sigma = daily_returns.std()
                     
-                    # --- THE FIX: CALCULATE DYNAMIC SUPPORT FLOOR ---
-                    # Find the lowest price in the last 5 years
+                    # --- DYNAMIC SUPPORT FLOOR ---
                     historical_low = df_close.min()
-                    # Set a hard floor (e.g., 20% below the 5-year low) to prevent zero-crashes
                     support_floor = historical_low * 0.80 
                     
                     sim_array = np.zeros((trading_days, auto_sims), dtype=np.float32)
@@ -382,18 +388,29 @@ elif run_analysis and ticker_symbol:
                     
                     for t in range(1, trading_days):
                         shock = np.random.normal(0, 1, auto_sims)
-                        
-                        # Calculate the next step
                         next_step = sim_array[t-1] * np.exp((mu - 0.5 * sigma**2) + sigma * shock)
                         
-                        # THE FIX: Apply the Support Floor boundary
-                        # If the math tries to push the price below the floor, force it to bounce
+                        # Apply the Support Floor boundary
                         sim_array[t] = np.maximum(next_step, support_floor)
                         
                     future_dates_mc = pd.bdate_range(start=df_close.index[-1] + pd.Timedelta(days=1), periods=trading_days)
                     median_path = np.median(sim_array, axis=1)
                     upper_95 = np.percentile(sim_array, 95, axis=1)
                     lower_05 = np.percentile(sim_array, 5, axis=1)
+                    
+                    # Plotting Monte Carlo Chart
+                    fig_mc = go.Figure()
+                    fig_mc.add_trace(go.Scatter(x=df_close.index[-252:], y=df_close.values[-252:], name='Historical Data', line=dict(color='#cccccc', width=2)))
+                    fig_mc.add_trace(go.Scatter(x=future_dates_mc, y=median_path, name='Statistical Median', line=dict(color='#00f2fe', width=3, dash='dash')))
+                    fig_mc.add_trace(go.Scatter(
+                        x=pd.concat([pd.Series(future_dates_mc), pd.Series(future_dates_mc[::-1])]),
+                        y=pd.concat([pd.Series(upper_95), pd.Series(lower_05[::-1])]),
+                        fill='toself', fillcolor='rgba(0, 242, 254, 0.15)', line=dict(color='rgba(255,255,255,0)'),
+                        name='90% Probability Cone'
+                    ))
+                    fig_mc.update_layout(template="plotly_dark", height=600, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', hovermode="x unified")
+                    st.plotly_chart(fig_mc, use_container_width=True)
+
             # ==========================================
             # TAB 5: RAW DATA EXPORT
             # ==========================================
