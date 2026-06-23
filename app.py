@@ -7,7 +7,6 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import warnings
 from prophet import Prophet
-import time
 
 warnings.filterwarnings('ignore')
 
@@ -179,7 +178,8 @@ if run_analysis:
                     if pe != 'N/A': pe = f"{pe:.2f}"
                     
                     div_yield = info.get('dividendYield', 'N/A')
-                    if div_yield != 'N/A': div_yield = f"{div_yield * 100:.2f}%"
+                    if div_yield != 'N/A' and isinstance(div_yield, (int, float)): 
+                        div_yield = f"{div_yield * 100:.2f}%"
 
                     col_f1.markdown(f'<div class="metric-card"><div class="metric-label">Sector</div><div class="metric-value">{info.get("sector", "N/A")}</div></div>', unsafe_allow_html=True)
                     col_f2.markdown(f'<div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value">{mcap}</div></div>', unsafe_allow_html=True)
@@ -232,8 +232,16 @@ if run_analysis:
                     days_ahead = (target_date - prophet_df['ds'].max()).days
                     future = model.make_future_dataframe(periods=days_ahead)
                     future = future[future['ds'].dt.weekday < 5] 
+                    
+                    # 1. Generate Raw Forecast
                     forecast = model.predict(future)
                     
+                    # 2. Prevent Negative Prices (Clipping)
+                    forecast['yhat'] = forecast['yhat'].clip(lower=0)
+                    forecast['yhat_lower'] = forecast['yhat_lower'].clip(lower=0)
+                    forecast['yhat_upper'] = forecast['yhat_upper'].clip(lower=0)
+                    
+                    # Forecast Chart
                     fig_fore = go.Figure()
                     fig_fore.add_trace(go.Scatter(x=prophet_df['ds'], y=prophet_df['y'], name='Historical Close', line=dict(color='#2c3e50')))
                     fig_fore.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='AI Target', line=dict(color='#27ae60', width=3)))
