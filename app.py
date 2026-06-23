@@ -167,10 +167,10 @@ elif run_analysis and ticker_symbol:
             sym, curr_code = get_currency_config(ticker_symbol)
             
             if isinstance(df.columns, pd.MultiIndex):
-                df_close = df['Close'][ticker_symbol].dropna()
+                df_close = df['Adj Close'][ticker_symbol].dropna()
                 df_vol = df['Volume'][ticker_symbol].dropna()
             else:
-                df_close = df['Close'].dropna()
+                df_close = df['Adj Close'].dropna()
                 df_vol = df['Volume'].dropna()
 
             current_price = df_close.iloc[-1]
