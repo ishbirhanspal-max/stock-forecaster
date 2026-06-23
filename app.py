@@ -4,215 +4,273 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import scipy.stats as stats
 from datetime import datetime, timedelta
 import warnings
 
 warnings.filterwarnings('ignore')
 
 # --- Page Configuration ---
-st.set_page_config(page_title="AlphaQuant | Monte Carlo Edition", page_icon="🏛️", layout="wide")
+st.set_page_config(page_title="AlphaQuant Pro | Institutional Terminal", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
+# Institutional Dark Theme CSS
 st.markdown("""
     <style>
-    .metric-card { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
-    .metric-value { font-size: 22px; font-weight: 800; color: #2c3e50; }
-    .metric-label { font-size: 13px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 1px; }
-    .verdict-box { padding: 20px; border-radius: 10px; margin-top: 20px; color: white; text-align: center; font-size: 20px; font-weight: bold; }
-    .verdict-buy { background: linear-gradient(135deg, #11998e, #38ef7d); }
-    .verdict-sell { background: linear-gradient(135deg, #cb2d3e, #ef473f); }
-    .verdict-hold { background: linear-gradient(135deg, #f1c40f, #f39c12); }
+    .stApp { background-color: #0e1117; color: #c9d1d9; }
+    .metric-card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    .metric-value { font-size: 24px; font-weight: 700; color: #58a6ff; font-family: 'Courier New', monospace; }
+    .metric-label { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+    .risk-high { color: #f85149; } .risk-low { color: #3fb950; }
+    .verdict-box { padding: 15px; border-radius: 6px; margin-top: 15px; text-align: center; font-size: 18px; font-weight: bold; border: 1px solid #30363d; }
+    .v-buy { background-color: rgba(46, 160, 67, 0.15); color: #3fb950; border-color: rgba(46, 160, 67, 0.4); }
+    .v-sell { background-color: rgba(248, 81, 73, 0.15); color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
+    .v-hold { background-color: rgba(210, 153, 34, 0.15); color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🏛️ AlphaQuant: Stochastic Monte Carlo Terminal")
-st.markdown("Simulating thousands of alternate future trajectories using Geometric Brownian Motion (GBM) to model real-world market risk and volatility.")
+st.title("📈 AlphaQuant Pro: Institutional Risk & Forecasting Terminal")
+st.markdown("Utilizing Merton Jump-Diffusion stochastic modeling and advanced quantitative risk metrics (VaR/CVaR).")
 st.markdown("---")
 
-# --- DATA FETCHING ---
+# --- DATA FETCHING & RISK ENGINE ---
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_stock_data(ticker):
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=5*365)
-    df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+def fetch_market_data(ticker, benchmark="^NSEI"):
+    end = datetime.today()
+    start = end - timedelta(days=5*365)
+    
+    # Fetch Target Asset
+    df = yf.download(ticker, start=start, end=end, progress=False)
+    # Fetch Benchmark (Nifty 50 by default for India, fallback to SPY if needed)
+    bench_df = yf.download(benchmark, start=start, end=end, progress=False)
     
     info = {}
-    ticker_obj = yf.Ticker(ticker)
     try:
-        info = ticker_obj.info
+        ticker_obj = yf.Ticker(ticker)
+        info = ticker_obj.fast_info
     except:
         pass
-    
-    if not info or 'marketCap' not in info:
-        try:
-            fast = ticker_obj.fast_info
-            info['marketCap'] = fast.market_cap
-            info['sector'] = "Limited Data"
-        except:
-            pass
-    return df, info
+        
+    return df, bench_df, info
 
-# --- Sidebar Controls ---
+# --- Sidebar Configuration ---
 with st.sidebar:
-    st.header("⚙️ Engine Configuration")
-    ticker_symbol = st.text_input("Stock Ticker (e.g., RELIANCE.NS, TSLA)", value="RELIANCE.NS").upper()
+    st.header("⚙️ Quant Parameters")
+    ticker_symbol = st.text_input("Target Asset Ticker (e.g., RELIANCE.NS):", value="RELIANCE.NS").upper()
+    benchmark_symbol = st.text_input("Market Benchmark (e.g., ^NSEI, ^BSESN):", value="^NSEI").upper()
     
-    st.markdown("### 🎲 Monte Carlo Parameters")
-    horizon_years = st.slider("Forecast Horizon (Years):", min_value=1, max_value=5, value=2)
-    num_simulations = st.slider("Number of Alternate Realities:", min_value=10, max_value=500, value=100)
+    st.markdown("### 🎲 Stochastic Jump-Diffusion")
+    horizon_years = st.slider("Projection Horizon (Years):", 1.0, 5.0, 1.0, 0.5)
+    num_simulations = st.slider("Paths (Alternate Realities):", 100, 2000, 500, 100)
     
-    run_analysis = st.button("🚀 Execute Simulation", type="primary", use_container_width=True)
+    run_terminal = st.button("🚀 Initialize Quant Engine", type="primary", use_container_width=True)
+    
+    st.markdown("---")
+    st.caption("Institutional models do not predict exact prices; they calculate probability distributions and risk-adjusted returns.")
 
-# --- Main Logic ---
-if run_analysis:
+# --- Terminal Execution ---
+if run_terminal:
     if ticker_symbol:
-        with st.spinner(f"📡 Downloading data and running {num_simulations} mathematical simulations for {ticker_symbol}..."):
+        with st.spinner("Initializing quantitative risk engine and fetching market microstructure..."):
             try:
-                df, info = fetch_stock_data(ticker_symbol)
+                df, bench_df, info = fetch_market_data(ticker_symbol, benchmark_symbol)
                 
                 if df.empty:
-                    st.error("No data found. Please verify the ticker symbol.")
+                    st.error("Asset data unavailable. Verify ticker.")
                     st.stop()
-                
+                    
+                # Clean MultiIndex if present
                 if isinstance(df.columns, pd.MultiIndex):
                     df_close = df['Close'][ticker_symbol].dropna()
+                    bench_close = bench_df['Close'][benchmark_symbol].dropna() if not bench_df.empty else pd.Series()
                 else:
                     df_close = df['Close'].dropna()
-                
+                    bench_close = bench_df['Close'].dropna() if not bench_df.empty else pd.Series()
+
                 current_price = df_close.iloc[-1]
+                returns = df_close.pct_change().dropna()
                 
-                # --- TECHNICALS & VERDICT ---
-                daily_returns = df_close.pct_change().dropna()
-                sma_50 = df_close.rolling(window=50).mean()
-                sma_200 = df_close.rolling(window=200).mean()
+                # --- INSTITUTIONAL RISK METRICS CALCULATION ---
+                # 1. Volatility & Returns
+                ann_volatility = returns.std() * np.sqrt(252)
+                ann_return = returns.mean() * 252
                 
-                # RSI
+                # 2. Value at Risk (VaR) & Expected Shortfall (CVaR) at 95% Confidence
+                var_95 = np.percentile(returns, 5)
+                cvar_95 = returns[returns <= var_95].mean()
+                
+                # 3. Sharpe & Sortino (Assuming 5% Risk Free Rate)
+                rf = 0.05
+                sharpe = (ann_return - rf) / ann_volatility
+                downside_std = returns[returns < 0].std() * np.sqrt(252)
+                sortino = (ann_return - rf) / downside_std if downside_std != 0 else 0
+                
+                # 4. Beta Calculation (Market Correlation)
+                beta = "N/A"
+                if not bench_close.empty:
+                    bench_returns = bench_close.pct_change().dropna()
+                    # Align dates
+                    aligned_data = pd.concat([returns, bench_returns], axis=1).dropna()
+                    aligned_data.columns = ['Asset', 'Market']
+                    cov_matrix = np.cov(aligned_data['Asset'], aligned_data['Market'])
+                    beta = cov_matrix[0, 1] / cov_matrix[1, 1]
+
+                # --- TECHNICAL CONFLUENCE VERDICT ---
+                sma_50 = df_close.rolling(50).mean()
+                sma_200 = df_close.rolling(200).mean()
+                
+                # RSI Vectorized
                 delta = df_close.diff()
                 gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
                 loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-                rs = gain / loss
-                rsi = 100 - (100 / (1 + rs))
-
-                # MACD
-                ema_12 = df_close.ewm(span=12, adjust=False).mean()
-                ema_26 = df_close.ewm(span=26, adjust=False).mean()
-                macd = ema_12 - ema_26
-                signal_line = macd.ewm(span=9, adjust=False).mean()
+                rsi = 100 - (100 / (1 + (gain / loss)))
 
                 score = 0
                 if rsi.iloc[-1] < 35: score += 1
                 elif rsi.iloc[-1] > 70: score -= 1
-                if macd.iloc[-1] > signal_line.iloc[-1]: score += 1
-                else: score -= 1
                 if current_price > sma_200.iloc[-1]: score += 1
                 else: score -= 1
+                if current_price > sma_50.iloc[-1]: score += 1
+                else: score -= 1
 
-                if score >= 2:
-                    verdict_class = "verdict-buy"
-                    verdict_text = "🎯 SYSTEM VERDICT: BUY / ACCUMULATE"
-                elif score <= -2:
-                    verdict_class = "verdict-sell"
-                    verdict_text = "⚠️ SYSTEM VERDICT: SELL / REDUCE"
-                else:
-                    verdict_class = "verdict-hold"
-                    verdict_text = "⚖️ SYSTEM VERDICT: HOLD"
+                if score >= 2: v_class, v_text = "v-buy", "ACCUMULATE (BULLISH CONFLUENCE)"
+                elif score <= -2: v_class, v_text = "v-sell", "REDUCE (BEARISH CONFLUENCE)"
+                else: v_class, v_text = "v-hold", "HOLD (NEUTRAL MOMENTUM)"
 
-                # UI TABS
-                tab_tech, tab_mc, tab_export = st.tabs(["📊 Technical Dashboard", "🎲 Monte Carlo Simulation", "💾 Data Matrix"])
+                # --- UI: TERMINAL TABS ---
+                tab_risk, tab_jump, tab_tech = st.tabs(["🛡️ Risk & Performance Desk", "🎲 Merton Jump-Diffusion Forecast", "📊 Technical Volume"])
 
                 # ==========================================
-                # TAB 1: TECHNICALS
+                # TAB 1: RISK DESK
                 # ==========================================
-                with tab_tech:
-                    st.markdown(f'<div class="verdict-box {verdict_class}">{verdict_text}</div>', unsafe_allow_html=True)
+                with tab_risk:
+                    st.markdown("### Institutional Risk Profile")
+                    c1, c2, c3, c4 = st.columns(4)
+                    
+                    c1.markdown(f'<div class="metric-card"><div class="metric-label">Value at Risk (95%)</div><div class="metric-value risk-high">{var_95*100:.2f}%</div><div style="font-size:10px;color:#8b949e;margin-top:5px;">Worst expected daily loss 95% of the time</div></div>', unsafe_allow_html=True)
+                    c2.markdown(f'<div class="metric-card"><div class="metric-label">Expected Shortfall (CVaR)</div><div class="metric-value risk-high">{cvar_95*100:.2f}%</div><div style="font-size:10px;color:#8b949e;margin-top:5px;">Average loss during the worst 5% of days</div></div>', unsafe_allow_html=True)
+                    c3.markdown(f'<div class="metric-card"><div class="metric-label">Sharpe Ratio</div><div class="metric-value">{sharpe:.2f}</div><div style="font-size:10px;color:#8b949e;margin-top:5px;">Risk-adjusted return (>1.0 is excellent)</div></div>', unsafe_allow_html=True)
+                    
+                    beta_display = f"{beta:.2f}" if isinstance(beta, float) else "N/A"
+                    c4.markdown(f'<div class="metric-card"><div class="metric-label">Market Beta</div><div class="metric-value">{beta_display}</div><div style="font-size:10px;color:#8b949e;margin-top:5px;">Volatility relative to benchmark</div></div>', unsafe_allow_html=True)
+
                     st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown("### Return Distribution (Fat Tails Analysis)")
                     
-                    fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
-                    fig_tech.add_trace(go.Scatter(x=df_close.index, y=df_close, name="Close Price", line=dict(color="#2c3e50")), row=1, col=1)
-                    fig_tech.add_trace(go.Scatter(x=df_close.index, y=sma_50, name="50 SMA", line=dict(color="#e67e22", dash="dot")), row=1, col=1)
-                    fig_tech.add_trace(go.Scatter(x=df_close.index, y=sma_200, name="200 SMA", line=dict(color="#c0392b", dash="dash")), row=1, col=1)
+                    fig_dist = go.Figure()
+                    fig_dist.add_trace(go.Histogram(x=returns, nbinsx=100, name="Daily Returns", marker_color='#3fb950', opacity=0.7))
+                    # Add Normal Distribution Overlay
+                    x_axis = np.linspace(returns.min(), returns.max(), 100)
+                    y_axis = stats.norm.pdf(x_axis, returns.mean(), returns.std())
+                    # Scale PDF to match histogram
+                    hist_max = np.histogram(returns.dropna(), bins=100)[0].max()
+                    y_axis_scaled = y_axis * (hist_max / y_axis.max())
                     
-                    fig_tech.add_trace(go.Scatter(x=rsi.index, y=rsi, name="RSI", line=dict(color="#8e44ad")), row=2, col=1)
-                    fig_tech.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
-                    fig_tech.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-
-                    fig_tech.update_layout(height=600, hovermode="x unified", template="plotly_white", margin=dict(t=40, b=40))
-                    st.plotly_chart(fig_tech, use_container_width=True)
+                    fig_dist.add_trace(go.Scatter(x=x_axis, y=y_axis_scaled, mode='lines', name="Normal Distribution Curve", line=dict(color='#58a6ff', width=2, dash='dash')))
+                    fig_dist.add_vline(x=var_95, line_dash="dot", line_color="#f85149", annotation_text="95% VaR Threshold")
+                    
+                    fig_dist.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=30, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(fig_dist, use_container_width=True)
 
                 # ==========================================
-                # TAB 2: MONTE CARLO SIMULATION
+                # TAB 2: MERTON JUMP DIFFUSION
                 # ==========================================
-                with tab_mc:
-                    st.header(f"Geometric Brownian Motion ({horizon_years} Year Risk Profile)")
-                    st.markdown(f"Running **{num_simulations}** unique simulations based on the stock's historical drift and volatility.")
+                with tab_jump:
+                    st.markdown("### Stochastic Merton Jump-Diffusion Modeling")
+                    st.caption("Unlike basic models, Jump-Diffusion accounts for sudden market shocks (crashes/breakouts) based on historical 'fat tail' distribution.")
                     
-                    # --- GBM MATH ENGINE ---
+                    # --- MATH ENGINE: MERTON JUMP DIFFUSION ---
                     trading_days = int(horizon_years * 252)
-                    mu = daily_returns.mean()
-                    sigma = daily_returns.std()
+                    dt = 1/252
                     
-                    # Create simulation matrix
+                    # Historical Drift and Volatility
+                    mu = returns.mean() * 252
+                    sigma = returns.std() * np.sqrt(252)
+                    
+                    # Jump parameters (Extracted heuristically from historical outliers)
+                    # Identify jumps as returns > 3 standard deviations
+                    jumps = returns[abs(returns) > (3 * returns.std())]
+                    lambda_jump = len(jumps) / 5 # Average jumps per year over 5 years
+                    mu_j = jumps.mean() if len(jumps) > 0 else 0
+                    sigma_j = jumps.std() if len(jumps) > 1 else 0.01
+                    
                     simulations = np.zeros((trading_days, num_simulations))
                     simulations[0] = current_price
                     
-                    # Generate random shocks and calculate prices
+                    # Run Vectorized Simulation
                     for t in range(1, trading_days):
-                        # Random shock (Brownian Motion)
-                        random_shock = np.random.normal(0, 1, num_simulations)
-                        # Price calculation formula
-                        simulations[t] = simulations[t-1] * np.exp((mu - 0.5 * sigma**2) + sigma * random_shock)
+                        # 1. Brownian Motion (Standard Market Movement)
+                        z1 = np.random.normal(0, 1, num_simulations)
+                        # 2. Poisson Process (Did a jump occur?)
+                        poisson_rv = np.random.poisson(lambda_jump * dt, num_simulations)
+                        # 3. Jump Size (If jump occurred, how big?)
+                        jump_size = np.random.normal(mu_j, sigma_j, num_simulations) * poisson_rv
+                        
+                        # Full Stochastic Differential Equation
+                        drift = (mu - 0.5 * sigma**2) * dt
+                        shock = sigma * np.sqrt(dt) * z1
+                        simulations[t] = simulations[t-1] * np.exp(drift + shock + jump_size)
                     
-                    # Generate Future Dates
-                    last_date = df_close.index[-1]
-                    future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=trading_days)
-                    
-                    # Calculate Probability Bands
+                    future_dates = pd.bdate_range(start=df_close.index[-1] + pd.Timedelta(days=1), periods=trading_days)
                     sim_df = pd.DataFrame(simulations, index=future_dates)
-                    median_path = sim_df.median(axis=1)
-                    upper_95 = sim_df.quantile(0.95, axis=1) # Top 5% Best Case Scenario
-                    lower_05 = sim_df.quantile(0.05, axis=1) # Bottom 5% Worst Case Scenario
                     
-                    # Plotting
+                    median_path = sim_df.median(axis=1)
+                    upper_95 = sim_df.quantile(0.95, axis=1)
+                    lower_05 = sim_df.quantile(0.05, axis=1)
+                    
                     fig_mc = go.Figure()
                     
-                    # Plot Historical
-                    fig_mc.add_trace(go.Scatter(x=df_close.index[-500:], y=df_close.values[-500:], name="Historical Data", line=dict(color="black", width=2)))
+                    # Historical Data
+                    fig_mc.add_trace(go.Scatter(x=df_close.index[-252:], y=df_close.values[-252:], name="Past 1Y Actuals", line=dict(color="#8b949e", width=2)))
                     
-                    # Plot a few random "Squiggly" Paths to show volatility (max 5 lines to keep it clean)
+                    # Plot 5 sample realities
                     for i in range(min(5, num_simulations)):
-                        fig_mc.add_trace(go.Scatter(x=future_dates, y=simulations[:, i], mode='lines', line=dict(width=1, opacity=0.3), showlegend=False))
+                        fig_mc.add_trace(go.Scatter(x=future_dates, y=simulations[:, i], mode='lines', line=dict(width=1, opacity=0.15), showlegend=False))
                     
-                    # Plot Median (The Expected Average Trend)
-                    fig_mc.add_trace(go.Scatter(x=future_dates, y=median_path, name="Median Trajectory", line=dict(color="#2980b9", width=3, dash='dash')))
+                    fig_mc.add_trace(go.Scatter(x=future_dates, y=median_path, name="Statistical Median", line=dict(color="#58a6ff", width=2, dash='dot')))
                     
-                    # Plot 95% Confidence Interval Shadows
                     fig_mc.add_trace(go.Scatter(
                         x=pd.concat([pd.Series(future_dates), pd.Series(future_dates[::-1])]),
                         y=pd.concat([pd.Series(upper_95), pd.Series(lower_05[::-1])]),
-                        fill='toself', fillcolor='rgba(41, 128, 185, 0.2)', line=dict(color='rgba(255,255,255,0)'),
-                        name='90% Probability Boundary'
+                        fill='toself', fillcolor='rgba(88, 166, 255, 0.1)', line=dict(color='rgba(255,255,255,0)'),
+                        name='90% Probability Matrix'
                     ))
                     
-                    fig_mc.update_layout(title="Monte Carlo Probability Cone", hovermode="x unified", template="plotly_white", height=700)
+                    fig_mc.update_layout(template="plotly_dark", height=600, hovermode="x unified")
                     st.plotly_chart(fig_mc, use_container_width=True)
                     
-                    # Save for export
-                    export_df = pd.DataFrame({
-                        'Date': future_dates.date,
-                        'Expected Median Price': np.round(median_path.values, 2),
-                        'Worst Case (5th Percentile)': np.round(lower_05.values, 2),
-                        'Best Case (95th Percentile)': np.round(upper_95.values, 2)
-                    }).set_index('Date')
-                    st.session_state['mc_export'] = export_df
+                    # Target Table
+                    st.markdown("##### Quantitative Targets")
+                    target_df = pd.DataFrame({
+                        "Horizon": [f"End of Year {horizon_years}"],
+                        "Expected Value (Median)": [f"₹{median_path.iloc[-1]:.2f}"],
+                        "Catastrophic Case (5%)": [f"₹{lower_05.iloc[-1]:.2f}"],
+                        "Euphoric Case (95%)": [f"₹{upper_95.iloc[-1]:.2f}"]
+                    })
+                    st.dataframe(target_df, hide_index=True, use_container_width=True)
 
                 # ==========================================
-                # TAB 3: EXPORT
+                # TAB 3: TECHNICALS
                 # ==========================================
-                with tab_export:
-                    st.header("💾 Download Probability Matrix")
-                    if 'mc_export' in st.session_state:
-                        st.dataframe(st.session_state['mc_export'], use_container_width=True)
-                        csv = st.session_state['mc_export'].to_csv().encode('utf-8')
-                        st.download_button("📥 Download Simulation Matrix (CSV)", data=csv, file_name=f'{ticker_symbol}_MonteCarlo.csv', mime='text/csv')
+                with tab_tech:
+                    st.markdown(f'<div class="verdict-box {v_class}">{v_text}</div>', unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    # High Performance Candlestick Chart with Volume
+                    fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3], subplot_titles=("Price Action & Baselines", "Momentum (RSI)"))
+                    
+                    # Determine color for candlesticks
+                    colors = np.where(df['Close'] > df['Open'], '#3fb950', '#f85149')
+                    
+                    fig_tech.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price", increasing_line_color='#3fb950', decreasing_line_color='#f85149'), row=1, col=1)
+                    fig_tech.add_trace(go.Scatter(x=df_close.index, y=sma_50, name="50-Day Baseline", line=dict(color="#d29922", width=1.5, dash='dot')), row=1, col=1)
+                    fig_tech.add_trace(go.Scatter(x=df_close.index, y=sma_200, name="200-Day Macro Trend", line=dict(color="#58a6ff", width=2)), row=1, col=1)
+                    
+                    fig_tech.add_trace(go.Scatter(x=rsi.index, y=rsi, name="RSI", line=dict(color="#a371f7")), row=2, col=1)
+                    fig_tech.add_hline(y=70, line_dash="dot", line_color="#f85149", row=2, col=1)
+                    fig_tech.add_hline(y=30, line_dash="dot", line_color="#3fb950", row=2, col=1)
+
+                    fig_tech.update_layout(template="plotly_dark", height=800, xaxis_rangeslider_visible=False, margin=dict(t=40, b=40))
+                    st.plotly_chart(fig_tech, use_container_width=True)
 
             except Exception as e:
-                st.error(f"Analysis failed. {e}")
+                st.error(f"Quant Engine Error: {e}")
