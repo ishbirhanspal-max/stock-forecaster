@@ -13,7 +13,7 @@ from statsmodels.tsa.arima.model import ARIMA
 warnings.filterwarnings('ignore')
 
 # --- PAGE SETUP & BLACK/BLUE THEME ---
-st.set_page_config(page_title="AlphaQuant | Executive Terminal", page_icon="🌐", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="GLOBAL STOCK ANALYSIS | Executive Terminal", page_icon="🌐", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
