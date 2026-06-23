@@ -5,34 +5,33 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import warnings
 
-# Import the Auto-ARIMA library
-from pmdarima.arima import auto_arima
+# Import the advanced Prophet forecasting engine
+from prophet import Prophet
 
 warnings.filterwarnings('ignore')
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Auto-ARIMA Stock Forecaster", page_icon="📈", layout="wide")
-st.title("📈 Fully Automated Stock Price Forecaster")
-st.markdown("This app fetches the last 5 years of live data from Yahoo Finance, **automatically discovers the best ARIMA parameters**, and projects the trend until **June 2027**.")
+st.set_page_config(page_title="Advanced Stock Forecaster", page_icon="📈", layout="wide")
+st.title("📈 Advanced Algorithmic Stock Forecaster")
+st.markdown("This engine uses **Facebook Prophet** to analyze 5 years of historical data, extracting yearly trends, weekly patterns, and market momentum to project prices until **June 2027**.")
 
 # --- Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ Configuration")
     st.markdown("Enter an Indian stock ticker (e.g., **RELIANCE.NS**, **TCS.NS**, **INFY.NS**).")
     
-    # Ticker Input (No manual parameters needed anymore!)
     ticker_symbol = st.text_input("Stock Ticker Symbol", value="RELIANCE.NS").upper()
     
-    run_forecast = st.button("🚀 Run Auto-Forecast", type="primary", use_container_width=True)
+    run_forecast = st.button("🚀 Run Advanced Forecast", type="primary", use_container_width=True)
     
     st.markdown("---")
-    st.info("💡 **How it works:** The engine uses `Auto-ARIMA` to test dozens of mathematical combinations in the background to find the perfect statistical fit for your specific stock before predicting the future.")
+    st.info("💡 **Why Prophet?** Unlike basic models that draw flat lines, this engine decomposes the stock's history to find hidden seasonal patterns and long-term momentum, generating a highly dynamic predictive curve.")
 
 # --- Main Logic ---
 if run_forecast:
     if ticker_symbol:
         # Step 1: Fetch Data
-        with st.spinner(f"📡 Fetching 5 years of live data for {ticker_symbol} from Yahoo Finance..."):
+        with st.spinner(f"📡 Fetching live market data for {ticker_symbol}..."):
             try:
                 end_date = datetime.today()
                 start_date = end_date - timedelta(days=5*365)
@@ -40,64 +39,80 @@ if run_forecast:
                 df = yf.download(ticker_symbol, start=start_date, end=end_date, progress=False)
                 
                 if df.empty:
-                    st.error(f"No data found for {ticker_symbol}. Please check the symbol and try again.")
+                    st.error(f"No data found for {ticker_symbol}. Please check the symbol.")
                 else:
-                    # Robustly extract 'Close' prices (handles yfinance formatting updates)
+                    # Clean the data for Prophet (Prophet requires columns named 'ds' for dates and 'y' for values)
                     if isinstance(df.columns, pd.MultiIndex):
-                        close_data = df['Close'][ticker_symbol].dropna()
+                        close_data = df['Close'][ticker_symbol].dropna().reset_index()
                     else:
-                        close_data = df['Close'].dropna()
-
-                    st.success(f"✅ Data successfully downloaded ({len(close_data)} trading days).")
+                        close_data = df['Close'].dropna().reset_index()
                     
-                    # Step 2: Auto-ARIMA Optimization
-                    with st.spinner("🧠 Finding the optimal ARIMA parameters automatically (This takes 10-30 seconds)..."):
+                    close_data.columns = ['ds', 'y'] # Rename for Prophet compatibility
+                    
+                    # Ensure timezone-naive dates for Prophet
+                    close_data['ds'] = close_data['ds'].dt.tz_localize(None)
+
+                    st.success("✅ Data successfully downloaded. Initializing algorithmic modeling...")
+                    
+                    # Step 2: Prophet Modeling & Fine-tuning
+                    with st.spinner("🧠 Analyzing trends and seasonal market patterns..."):
                         
-                        # The auto_arima function does all the heavy lifting
-                        model = auto_arima(
-                            close_data, 
-                            start_p=0, start_q=0,
-                            max_p=5, max_q=5, # Search bounds
-                            seasonal=False,   # Daily stock data is generally treated as non-seasonal for ARIMA
-                            stepwise=True,    # Uses a smart search algorithm to save time
-                            suppress_warnings=True,
-                            error_action="ignore"
+                        # Initialize Prophet with fine-tuned parameters for financial data
+                        model = Prophet(
+                            daily_seasonality=False,
+                            weekly_seasonality=True,
+                            yearly_seasonality=True,
+                            changepoint_prior_scale=0.05 # Allows the trend line to be flexible and catch recent momentum
                         )
                         
-                        # Show the user the parameters the AI chose
-                        best_order = model.order
-                        st.info(f"🎯 **Optimization Complete:** The engine automatically selected ARIMA parameters **(p={best_order[0]}, d={best_order[1]}, q={best_order[2]})** as the most accurate fit for this specific stock.")
+                        # Fit the model
+                        model.fit(close_data)
                         
                         # Step 3: Forecast until June 30, 2027
                         target_date = datetime(2027, 6, 30)
-                        last_historical_date = close_data.index[-1]
+                        last_date = close_data['ds'].max()
+                        days_into_future = (target_date - last_date).days
                         
-                        # Calculate future business days
-                        future_dates = pd.date_range(start=last_historical_date + pd.Timedelta(days=1), 
-                                                     end=target_date, 
-                                                     freq='B')
-                        forecast_steps = len(future_dates)
+                        # Generate future dates
+                        future = model.make_future_dataframe(periods=days_into_future)
                         
-                        # Generate Forecast
-                        forecast_values = model.predict(n_periods=forecast_steps)
+                        # Filter out weekends (Saturdays and Sundays) for realistic stock market days
+                        future = future[future['ds'].dt.weekday < 5]
+                        
+                        # Predict the future!
+                        forecast = model.predict(future)
+                        
+                        # Extract just the future portion for the table
+                        future_forecast = forecast[forecast['ds'] > last_date]
                         
                         # Step 4: Interactive Plotly Graph
                         st.subheader(f"Projected Price Trajectory: {ticker_symbol}")
                         
                         fig = go.Figure()
                         
-                        # Historical Data Line
+                        # Historical Data (Actuals)
                         fig.add_trace(go.Scatter(
-                            x=close_data.index, y=close_data.values,
+                            x=close_data['ds'], y=close_data['y'],
                             mode='lines', name='Historical Close Price',
                             line=dict(color='#2c3e50', width=2)
                         ))
                         
-                        # Forecast Data Line
+                        # Forecast Data Line (Trend)
                         fig.add_trace(go.Scatter(
-                            x=future_dates, y=forecast_values,
-                            mode='lines', name='Auto-ARIMA Forecast',
-                            line=dict(color='#e74c3c', dash='dash', width=3)
+                            x=forecast['ds'], y=forecast['yhat'],
+                            mode='lines', name='AI Projected Trend',
+                            line=dict(color='#e74c3c', width=3)
+                        ))
+                        
+                        # Confidence Interval (Shaded Area)
+                        fig.add_trace(go.Scatter(
+                            x=pd.concat([forecast['ds'], forecast['ds'][::-1]]),
+                            y=pd.concat([forecast['yhat_upper'], forecast['yhat_lower'][::-1]]),
+                            fill='toself',
+                            fillcolor='rgba(231, 76, 60, 0.2)',
+                            line=dict(color='rgba(255,255,255,0)'),
+                            name='Confidence Interval (Volatility)',
+                            showlegend=True
                         ))
                         
                         fig.update_layout(
@@ -114,15 +129,17 @@ if run_forecast:
                         # Step 5: Tabular Data display
                         st.subheader("📅 Future Valuation Metrics (Tabular)")
                         
-                        forecast_df = pd.DataFrame({
-                            "Future Date": future_dates.date,
-                            "Predicted Price (INR)": forecast_values.values
-                        })
+                        # Clean up the output table
+                        clean_table = future_forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
+                        clean_table.columns = ['Date', 'Predicted Price', 'Worst Case', 'Best Case']
                         
-                        forecast_df['Predicted Price (INR)'] = forecast_df['Predicted Price (INR)'].round(2)
+                        # Format dates and round numbers
+                        clean_table['Date'] = clean_table['Date'].dt.date
+                        clean_table['Predicted Price'] = clean_table['Predicted Price'].round(2)
+                        clean_table['Worst Case'] = clean_table['Worst Case'].round(2)
+                        clean_table['Best Case'] = clean_table['Best Case'].round(2)
                         
-                        # Display as a clean, scrollable dataframe
-                        st.dataframe(forecast_df, use_container_width=True)
+                        st.dataframe(clean_table, use_container_width=True)
                         
             except Exception as e:
                 st.error(f"An execution error occurred: {e}")
