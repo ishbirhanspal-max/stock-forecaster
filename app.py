@@ -13,7 +13,7 @@ from statsmodels.tsa.arima.model import ARIMA
 warnings.filterwarnings('ignore')
 
 # --- PAGE SETUP & BLACK/BLUE THEME ---
-st.set_page_config(page_title="GLOBAL STOCK ANALYSIS | Executive Terminal", page_icon="🌐", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AlphaQuant | Executive Terminal", page_icon="🌐", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
@@ -37,10 +37,11 @@ st.markdown("""
     .company-title { font-size: 3.8em; font-weight: 900; text-align: center; text-transform: uppercase; background: -webkit-linear-gradient(#ffffff, #00aaff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0px; padding-bottom: 0px; line-height: 1.2; letter-spacing: -1px;}
     .company-ticker { font-size: 1.2em; font-weight: 600; text-align: center; color: #0066ff; letter-spacing: 4px; margin-top: 0px; padding-top: 5px; margin-bottom: 30px;}
     
-    .verdict-box { padding: 20px; border-radius: 12px; margin-top: 10px; margin-bottom: 25px; text-align: center; font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #ffffff; text-transform: uppercase; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.8); }
-    .v-buy { background: linear-gradient(135deg, #004d33 0%, #00b377 100%); border: 1px solid #00ffaa; }
-    .v-sell { background: linear-gradient(135deg, #660022 0%, #e6004c 100%); border: 1px solid #ff3377; }
-    .v-hold { background: linear-gradient(135deg, #002266 0%, #0055ff 100%); border: 1px solid #00aaff; }
+    /* VIBRANT NEON VERDICT BOXES */
+    .verdict-box { padding: 20px; border-radius: 12px; margin-top: 10px; margin-bottom: 25px; text-align: center; font-size: 22px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.8); }
+    .v-buy { background-color: rgba(0, 255, 136, 0.05); border: 2px solid #00ff88; color: #00ff88; text-shadow: 0 0 10px rgba(0, 255, 136, 0.5); }
+    .v-sell { background-color: rgba(255, 51, 102, 0.05); border: 2px solid #ff3366; color: #ff3366; text-shadow: 0 0 10px rgba(255, 51, 102, 0.5); }
+    .v-hold { background-color: rgba(0, 170, 255, 0.05); border: 2px solid #00aaff; color: #00aaff; text-shadow: 0 0 10px rgba(0, 170, 255, 0.5); }
     
     hr { border-color: #001a4d; }
     h1, h2, h3 { color: #ffffff; }
@@ -57,11 +58,11 @@ def get_currency_config(ticker):
     elif ticker_up.endswith('.DE') or ticker_up.endswith('.PA') or ticker_up.endswith('.AS'): return '€', 'EUR'
     else: return '$', 'USD'
 
-# --- DATA FETCHING (With Multi-API Routing) ---
+# --- DATA FETCHING (With Fixed Wikipedia Fallback) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_data(ticker):
     end = datetime.today()
-    start = end - timedelta(days=5*365) # Strictly forces minimum 5 years of data
+    start = end - timedelta(days=5*365)
     
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/114.0.0.0 Safari/537.36'})
@@ -92,25 +93,32 @@ def fetch_data(ticker):
         except:
             pass
             
-    # --- WIKIPEDIA API FALLBACK ROUTER ---
-    # If Yahoo blocked the text, silently pull from Wikipedia
+    # THE FIX: High-Accuracy Wikipedia Fallback
     if not info.get('longBusinessSummary') or len(info.get('longBusinessSummary', '')) < 50:
         try:
-            # Extract the core company name (e.g., "Reliance" from "Reliance Industries Limited")
-            search_name = info.get('longName', ticker).split(',')[0].split(' ')[0]
-            wiki_search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={search_name} company&utf8=&format=json"
-            search_res = session.get(wiki_search_url, timeout=3).json()
+            search_name = info.get('longName', ticker)
+            
+            search_url = "https://en.wikipedia.org/w/api.php"
+            search_params = {
+                "action": "query", "list": "search", "srsearch": search_name, 
+                "utf8": "", "format": "json"
+            }
+            search_res = session.get(search_url, params=search_params, timeout=3).json()
             
             if search_res['query']['search']:
                 best_match_title = search_res['query']['search'][0]['title']
-                wiki_summary_url = f"https://en.wikipedia.org/w/api.php?format=json&action=query&prop=extracts&exintro&explaintext&redirects=1&titles={best_match_title}"
-                summary_res = session.get(wiki_summary_url, timeout=3).json()
+                summary_params = {
+                    "format": "json", "action": "query", "prop": "extracts", 
+                    "exintro": "1", "explaintext": "1", "redirects": "1", 
+                    "titles": best_match_title
+                }
+                summary_res = session.get(search_url, params=summary_params, timeout=3).json()
                 
                 pages = summary_res['query']['pages']
                 for page_id in pages:
                     wiki_text = pages[page_id].get('extract', '')
-                    # Grab the first ~800 characters for a clean briefing
-                    info['longBusinessSummary'] = wiki_text[:800] + "... [Source: Wikipedia Public API Database]"
+                    if wiki_text:
+                        info['longBusinessSummary'] = wiki_text[:800] + "... [Source: Wikipedia Public API Database]"
                     break
         except Exception:
             info['longBusinessSummary'] = "Corporate briefing is currently unavailable. Both primary exchange servers and secondary databases rejected the data request."
@@ -154,7 +162,7 @@ if not run_analysis or not ticker_symbol:
         This platform runs concurrent analytical engines to evaluate market conditions based on a strict 5-year historical footprint.
         
         1. **Target Selection:** Enter a valid ticker in the sidebar. **Use exchange suffixes for international stocks** (e.g., `.NS` for India's NSE). US Stocks require no suffix.
-        2. **Algorithmic Integration:** The Forecasting tab now unifies your chosen Deterministic path (Prophet or ARIMA) alongside the Probabilistic Monte Carlo simulation in a single view.
+        2. **Algorithmic Integration:** The Forecasting tab unifies your chosen Deterministic path (Prophet or ARIMA) alongside the Probabilistic Monte Carlo simulation in a single view.
         3. **Execution:** Click 'Execute Briefing' to generate the executive reports.
         """)
         
@@ -190,7 +198,6 @@ elif run_analysis and ticker_symbol:
 
             current_price = df_close.iloc[-1]
             
-            # THE UNIVERSAL SUPPORT FLOOR: Prevents ANY algorithm from crashing to zero
             support_floor = df_close.min() * 0.70
             
             # --- QUANTITATIVE CALCULATIONS ---
@@ -306,8 +313,8 @@ elif run_analysis and ticker_symbol:
                 st.markdown("### 2. Relative Strength Index (Momentum)")
                 fig2 = go.Figure()
                 fig2.add_trace(go.Scatter(x=rsi.index, y=rsi, name="RSI", line=dict(color="#00aaff")))
-                fig2.add_hline(y=70, line_dash="dot", line_color="#ff3377")
-                fig2.add_hline(y=30, line_dash="dot", line_color="#00ffaa")
+                fig2.add_hline(y=70, line_dash="dot", line_color="#ff3366")
+                fig2.add_hline(y=30, line_dash="dot", line_color="#00ff88")
                 fig2.update_layout(template="plotly_dark", height=300, plot_bgcolor='#000000', paper_bgcolor='#000000')
                 st.plotly_chart(fig2, use_container_width=True)
                 
@@ -324,7 +331,7 @@ elif run_analysis and ticker_symbol:
                 fig3 = go.Figure()
                 fig3.add_trace(go.Scatter(x=macd.index, y=macd, name="MACD", line=dict(color="#00aaff")))
                 fig3.add_trace(go.Scatter(x=sig_line.index, y=sig_line, name="Signal", line=dict(color="#0066ff")))
-                fig3.add_trace(go.Bar(x=macd_hist.index, y=macd_hist, name="Hist", marker_color=np.where(macd_hist>0, '#00ffaa', '#ff3377')))
+                fig3.add_trace(go.Bar(x=macd_hist.index, y=macd_hist, name="Hist", marker_color=np.where(macd_hist>0, '#00ff88', '#ff3366')))
                 fig3.update_layout(template="plotly_dark", height=300, plot_bgcolor='#000000', paper_bgcolor='#000000')
                 st.plotly_chart(fig3, use_container_width=True)
                 
@@ -360,7 +367,6 @@ elif run_analysis and ticker_symbol:
                         future = future[future['ds'].dt.weekday < 5] 
                         
                         forecast = model.predict(future)
-                        # THE FIX: Clip Prophet at the mathematical support floor, NOT at 0.
                         forecast['yhat'] = forecast['yhat'].clip(lower=support_floor)
                         forecast['yhat_lower'] = forecast['yhat_lower'].clip(lower=support_floor)
                         forecast['yhat_upper'] = forecast['yhat_upper'].clip(lower=support_floor)
@@ -378,7 +384,6 @@ elif run_analysis and ticker_symbol:
                         fitted_model = model.fit()
                         
                         forecast_res = fitted_model.get_forecast(steps=trading_days)
-                        # THE FIX: Apply the support floor strictly to ARIMA via np.maximum
                         forecast_actual = np.maximum(np.exp(forecast_res.predicted_mean), support_floor)
                         conf_int_log = forecast_res.conf_int().values
                         lower_bound = np.maximum(np.exp(conf_int_log[:, 0]), support_floor)
@@ -405,7 +410,6 @@ elif run_analysis and ticker_symbol:
                         fill='toself', fillcolor='rgba(0, 170, 255, 0.15)', line=dict(color='rgba(255,255,255,0)'),
                         name='Confidence Boundary'
                     ))
-                    # Plot the support floor line
                     fig_fore.add_hline(y=support_floor, line_dash="dot", line_color="#0044aa", annotation_text="Mathematical Support Floor")
                     fig_fore.update_layout(template="plotly_dark", height=500, plot_bgcolor='#000000', paper_bgcolor='#000000', hovermode="x unified")
                     st.plotly_chart(fig_fore, use_container_width=True)
@@ -435,7 +439,6 @@ elif run_analysis and ticker_symbol:
                     for t in range(1, trading_days):
                         shock = np.random.normal(0, 1, auto_sims)
                         next_step = sim_array[t-1] * np.exp((mu - 0.5 * sigma**2) + sigma * shock)
-                        # Apply the Support Floor boundary
                         sim_array[t] = np.maximum(next_step, support_floor)
                         
                     future_dates_mc = pd.bdate_range(start=df_close.index[-1] + pd.Timedelta(days=1), periods=trading_days)
@@ -454,11 +457,11 @@ elif run_analysis and ticker_symbol:
                     
                     fig_mc = go.Figure()
                     fig_mc.add_trace(go.Scatter(x=df_close.index[-252:], y=df_close.values[-252:], name='Historical', line=dict(color='#557799', width=2)))
-                    fig_mc.add_trace(go.Scatter(x=future_dates_mc, y=median_path, name='Statistical Median', line=dict(color='#00d4ff', width=3, dash='dash')))
+                    fig_mc.add_trace(go.Scatter(x=future_dates_mc, y=median_path, name='Statistical Median', line=dict(color='#00aaff', width=3, dash='dash')))
                     fig_mc.add_trace(go.Scatter(
                         x=pd.concat([pd.Series(future_dates_mc), pd.Series(future_dates_mc[::-1])]),
                         y=pd.concat([pd.Series(upper_95), pd.Series(lower_05[::-1])]),
-                        fill='toself', fillcolor='rgba(0, 212, 255, 0.15)', line=dict(color='rgba(255,255,255,0)'),
+                        fill='toself', fillcolor='rgba(0, 170, 255, 0.15)', line=dict(color='rgba(255,255,255,0)'),
                         name='90% Probability Cone'
                     ))
                     fig_mc.add_hline(y=support_floor, line_dash="dot", line_color="#0044aa", annotation_text="Mathematical Support Floor")
