@@ -2,4 +2,6 @@ streamlit
 yfinance
 pandas
 plotly
+pmdarima
+scikit-learn
 statsmodels
