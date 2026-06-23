@@ -30,23 +30,38 @@ st.title("🏛️ AlphaQuant: Institutional Market Analysis & AI Engine")
 st.markdown("A unified quantitative terminal combining Fundamental health, Technical momentum, and Algorithmic AI forecasting.")
 st.markdown("---")
 
-# --- DATA FETCHING WITH CACHING (THE FIX) ---
-@st.cache_data(ttl=3600, show_spinner=False) # Caches data for 1 hour to prevent Rate Limiting
+# --- DATA FETCHING WITH ADVANCED CACHING & FALLBACKS ---
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_stock_data(ticker):
     end_date = datetime.today()
     start_date = end_date - timedelta(days=5*365)
     
-    # Fetch historical price data
+    # 1. Fetch historical price data (Rarely rate-limited)
     df = yf.download(ticker, start=start_date, end=end_date, progress=False)
     
-    # Try to fetch fundamental info, but don't crash if rate-limited
+    # 2. Try to fetch fundamental info
     info = {}
+    ticker_obj = yf.Ticker(ticker)
+    
     try:
-        ticker_obj = yf.Ticker(ticker)
+        # First, attempt the heavy web scrape for full data
         info = ticker_obj.info
     except Exception:
-        pass # If yfinance blocks the info request, silently continue
+        pass # Caught the rate limit!
         
+    # 3. If the heavy scrape failed, use the lightweight 'fast_info' fallback
+    if not info or 'marketCap' not in info:
+        try:
+            fast = ticker_obj.fast_info
+            info['marketCap'] = fast.market_cap
+            info['longName'] = ticker
+            info['sector'] = "Sector Data Limited"
+            info['trailingPE'] = "N/A"
+            info['dividendYield'] = "N/A"
+            info['longBusinessSummary'] = "⚠️ **Note:** Yahoo Finance rate limits prevented downloading the full text company profile. However, Market Cap, Technicals, and AI Forecasting models have been successfully compiled and are fully operational."
+        except Exception:
+            pass
+            
     return df, info
 
 # --- Sidebar Controls ---
